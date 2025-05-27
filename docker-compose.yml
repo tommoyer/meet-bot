@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  meet-bot:
+    build: .
+    container_name: meet-bot
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - HOST=0.0.0.0
+      - MATTERMOST_TOKEN=${MATTERMOST_TOKEN}
+      - GOOGLE_SERVICE_ACCOUNT_FILE=/etc/meet-bot/service-account.json
+      - DEBUG=false
+    volumes:
+      - ./credentials:/etc/meet-bot:ro
+      - ./logs:/var/log/meet-bot
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

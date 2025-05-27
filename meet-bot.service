@@ -1,0 +1,38 @@
+[Unit]
+Description=Google Meet Bot for Mattermost
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=meet-bot
+Group=meet-bot
+WorkingDirectory=/opt/meet-bot
+ExecStart=/opt/meet-bot/venv/bin/python /opt/meet-bot/main.py
+Restart=always
+RestartSec=10
+Environment=PYTHONPATH=/opt/meet-bot
+Environment=PORT=8080
+Environment=HOST=0.0.0.0
+Environment=MATTERMOST_TOKEN=your_mattermost_token_here
+Environment=GOOGLE_SERVICE_ACCOUNT_FILE=/etc/meet-bot/service-account.json
+Environment=DEBUG=false
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/meet-bot /etc/meet-bot
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=meet-bot
+
+[Install]
+WantedBy=multi-user.target
