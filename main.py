@@ -40,11 +40,11 @@ CONFIG = {
 
 
 class GoogleMeetService:
-    """Service class to handle Google Meet API operations."""
+    """Service class to handle Google Meet creation via Calendar API."""
     
     def __init__(self):
         self.credentials = None
-        self.service = None
+        self.calendar_service = None
         self._initialize_credentials()
     
     def _initialize_credentials(self):
@@ -56,8 +56,8 @@ class GoogleMeetService:
                 self.credentials = ServiceAccountCredentials.from_service_account_file(
                     CONFIG['service_account_file'],
                     scopes=[
-                        'https://www.googleapis.com/auth/meetings.space.created',
-                        'https://www.googleapis.com/auth/calendar'
+                        'https://www.googleapis.com/auth/calendar',
+                        'https://www.googleapis.com/auth/calendar.events'
                     ]
                 )
             # Fall back to OAuth credentials
@@ -72,57 +72,60 @@ class GoogleMeetService:
             else:
                 raise Exception("No valid credentials found")
             
-            # Initialize the Meet API service
-            self.service = build('meet', 'v2', credentials=self.credentials)
-            logger.info("Google Meet service initialized successfully")
+            # Initialize the Calendar API service
+            self.calendar_service = build('calendar', 'v3', credentials=self.credentials)
+            logger.info("Google Calendar service initialized successfully")
             
         except Exception as e:
             logger.error(f"Failed to initialize Google credentials: {e}")
             raise
     
-    def create_meet_space(self, display_name: str = None) -> Optional[str]:
+    def create_instant_meet(self, title: str = "Quick Meeting") -> Optional[str]:
         """
-        Create a new Google Meet space using the Meet API.
+        Create an instant Google Meet using Calendar API.
+        Creates a calendar event starting now with minimal duration.
         
         Args:
-            display_name: Optional display name for the meeting
+            title: Meeting title
             
         Returns:
             The Google Meet URL or None if creation fails
         """
         try:
-            # Create the space request
-            space_config = {}
-            if display_name:
-                space_config['config'] = {
-                    'accessType': 'OPEN',  # Anyone with the link can join
-                    'entryPointAccess': 'ALL'
-                }
+            # Create an event starting now with 5-minute duration (minimum for Meet link generation)
+            start_time = datetime.utcnow()
+            end_time = start_time + timedelta(minutes=5)
             
-            # Create the space
-            request_body = space_config if space_config else {}
+            return self._create_calendar_event_with_meet(title, start_time, end_time)
             
-            space = self.service.spaces().create(body=request_body).execute()
-            
-            # Extract the meeting URL
-            meeting_uri = space.get('meetingUri')
-            if meeting_uri:
-                logger.info(f"Created Google Meet space: {meeting_uri}")
-                return meeting_uri
-            else:
-                logger.error("No meeting URI returned from Google Meet API")
-                return None
-                
-        except HttpError as error:
-            logger.error(f"Google Meet API error: {error}")
-            return None
         except Exception as error:
-            logger.error(f"Unexpected error creating Meet space: {error}")
+            logger.error(f"Error creating instant Meet: {error}")
             return None
     
-    def create_meet_with_calendar(self, title: str, start_time: datetime, end_time: datetime) -> Optional[str]:
+    def create_scheduled_meet(self, title: str, duration_minutes: int = 60) -> Optional[str]:
         """
-        Create a Google Meet through Calendar API as a fallback.
+        Create a scheduled Google Meet using Calendar API.
+        
+        Args:
+            title: Meeting title
+            duration_minutes: Meeting duration in minutes
+            
+        Returns:
+            The Google Meet URL or None if creation fails
+        """
+        try:
+            start_time = datetime.utcnow()
+            end_time = start_time + timedelta(minutes=duration_minutes)
+            
+            return self._create_calendar_event_with_meet(title, start_time, end_time)
+            
+        except Exception as error:
+            logger.error(f"Error creating scheduled Meet: {error}")
+            return None
+    
+    def _create_calendar_event_with_meet(self, title: str, start_time: datetime, end_time: datetime) -> Optional[str]:
+        """
+        Create a Google Calendar event with Google Meet integration.
         
         Args:
             title: Meeting title
@@ -133,34 +136,45 @@ class GoogleMeetService:
             The Google Meet URL or None if creation fails
         """
         try:
-            # Initialize Calendar service if needed
-            calendar_service = build('calendar', 'v3', credentials=self.credentials)
+            # Generate a unique request ID to prevent duplicate conference creation
+            request_id = f'meet-{int(start_time.timestamp())}-{int(time.time() * 1000) % 10000}'
             
             # Create calendar event with Google Meet
             event = {
                 'summary': title,
+                'description': f'Meeting created via Meet Bot at {datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")} UTC',
                 'start': {
-                    'dateTime': start_time.isoformat(),
+                    'dateTime': start_time.isoformat() + 'Z',
                     'timeZone': 'UTC',
                 },
                 'end': {
-                    'dateTime': end_time.isoformat(),
+                    'dateTime': end_time.isoformat() + 'Z',
                     'timeZone': 'UTC',
                 },
                 'conferenceData': {
                     'createRequest': {
-                        'requestId': f'meet-{int(start_time.timestamp())}-{int(time.time())}',
-                        'conferenceSolutionKey': {'type': 'hangoutsMeet'}
+                        'requestId': request_id,
+                        'conferenceSolutionKey': {
+                            'type': 'hangoutsMeet'
+                        }
                     }
-                }
+                },
+                'attendees': [],  # Empty attendees list - anyone with link can join
+                'guestsCanInviteOthers': True,
+                'guestsCanSeeOtherGuests': True
             }
             
-            # Insert the event
-            created_event = calendar_service.events().insert(
+            logger.info(f"Creating calendar event with Meet: {title}")
+            
+            # Insert the event with conference data
+            created_event = self.calendar_service.events().insert(
                 calendarId='primary',
                 body=event,
-                conferenceDataVersion=1
+                conferenceDataVersion=1,
+                sendUpdates='none'  # Don't send email notifications
             ).execute()
+            
+            logger.info(f"Calendar event created: {created_event.get('id')}")
             
             # Extract Google Meet link
             conference_data = created_event.get('conferenceData', {})
@@ -168,13 +182,28 @@ class GoogleMeetService:
             
             for entry_point in entry_points:
                 if entry_point.get('entryPointType') == 'video':
-                    logger.info(f"Created Google Meet via Calendar: {entry_point.get('uri')}")
-                    return entry_point.get('uri')
+                    meet_url = entry_point.get('uri')
+                    logger.info(f"Successfully created Google Meet: {meet_url}")
+                    return meet_url
             
+            # Fallback: look for hangoutLink in the event
+            hangout_link = created_event.get('hangoutLink')
+            if hangout_link:
+                logger.info(f"Found hangout link: {hangout_link}")
+                return hangout_link
+            
+            logger.error("No Google Meet link found in created event")
             return None
             
+        except HttpError as error:
+            logger.error(f"Google Calendar API error: {error}")
+            if error.resp.status == 403:
+                logger.error("Permission denied. Check that Calendar API is enabled and credentials are correct.")
+            elif error.resp.status == 404:
+                logger.error("Calendar not found. Make sure you're using the correct calendar ID.")
+            return None
         except Exception as error:
-            logger.error(f"Error creating Meet via Calendar API: {error}")
+            logger.error(f"Unexpected error creating Meet via Calendar API: {error}")
             return None
 
 
@@ -249,7 +278,8 @@ def health_check():
     status = {
         'status': 'healthy',
         'timestamp': datetime.utcnow().isoformat(),
-        'google_meet_service': meet_service is not None
+        'google_meet_service': meet_service is not None,
+        'version': '1.0.1'
     }
     return jsonify(status)
 
@@ -296,23 +326,14 @@ def handle_meet_command():
                 args['title'] = f"Meeting by {user_name}"
         
         # Create Google Meet link
+        logger.info(f"Creating Google Meet: title='{args['title']}', duration={args['duration']}, quick={args['quick']}")
+        
         if args['quick']:
-            # For quick meetings, use the direct Meet API
-            meet_url = meet_service.create_meet_space(args['title'])
+            # For quick meetings, create instant meet
+            meet_url = meet_service.create_instant_meet(args['title'])
         else:
-            # For scheduled meetings, use Calendar API with Meet integration
-            start_time = datetime.utcnow()
-            end_time = start_time + timedelta(minutes=args['duration'])
-            meet_url = meet_service.create_meet_with_calendar(
-                title=args['title'],
-                start_time=start_time,
-                end_time=end_time
-            )
-            
-            # Fallback to direct Meet API if Calendar fails
-            if not meet_url:
-                logger.info("Calendar API failed, falling back to direct Meet API")
-                meet_url = meet_service.create_meet_space(args['title'])
+            # For regular meetings, create scheduled meet
+            meet_url = meet_service.create_scheduled_meet(args['title'], args['duration'])
         
         if meet_url:
             # Create success response
@@ -323,15 +344,18 @@ def handle_meet_command():
                 response_text += f"**Duration:** {args['duration']} minutes\n"
             response_text += f"**Created by:** @{user_name}"
             
+            logger.info(f"Successfully created Google Meet for user {user_name}: {meet_url}")
+            
             return jsonify({
                 'response_type': 'in_channel',
                 'text': response_text
             })
         else:
             # Error response
+            logger.error(f"Failed to create Google Meet for user {user_name}")
             return jsonify({
                 'response_type': 'ephemeral',
-                'text': '❌ Failed to create Google Meet link. Please try again or contact your administrator.'
+                'text': '❌ Failed to create Google Meet link. Please check the logs or contact your administrator.'
             })
     
     except Exception as e:
@@ -349,22 +373,23 @@ def handle_help_command():
 🎥 **Google Meet Bot Help**
 
 **Commands:**
-• `/meet` - Create a quick meeting
-• `/meet quick` - Create a 30-minute quick meeting
+• `/meet` - Create a meeting for this channel/conversation
+• `/meet quick` - Create a 30-minute quick meeting  
 • `/meet title="Meeting Name"` - Create a meeting with custom title
 • `/meet title="Weekly Standup" duration=90` - Create a 90-minute meeting
 • `/meet-help` - Show this help message
 
 **Examples:**
-• `/meet` - Creates "Channel Meeting" or "Meeting by YourName"
+• `/meet` - Creates meeting named after current channel
 • `/meet title="Daily Standup"` - Creates "Daily Standup" meeting (60 min)
 • `/meet title="Client Call" duration=30` - Creates 30-minute "Client Call"
-• `/meet quick` - Creates quick 30-minute meeting
+• `/meet quick` - Creates instant 30-minute meeting
 
 **Notes:**
-• All meetings are created with open access (anyone with link can join)
+• All meetings are created as Google Calendar events with Meet links
 • Meeting links are shared in the channel where the command was used
 • Duration is in minutes (default: 60 minutes for regular, 30 for quick)
+• Anyone with the link can join the meeting
 """
     
     return jsonify({
@@ -376,6 +401,7 @@ def handle_help_command():
 if __name__ == '__main__':
     logger.info(f"Starting Google Meet Bot server on {CONFIG['host']}:{CONFIG['port']}")
     logger.info(f"Debug mode: {CONFIG['debug']}")
+    logger.info(f"Google Meet service available: {meet_service is not None}")
     
     app.run(
         host=CONFIG['host'],

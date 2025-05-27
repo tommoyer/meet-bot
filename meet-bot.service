@@ -8,7 +8,7 @@ Type=simple
 User=meet-bot
 Group=meet-bot
 WorkingDirectory=/opt/meet-bot
-ExecStart=/opt/meet-bot/venv/bin/python /opt/meet-bot/main.py
+ExecStart=/opt/meet-bot/venv/bin/gunicorn --bind 0.0.0.0:8080 --workers 2 --timeout 30 --log-level info main:app
 Restart=always
 RestartSec=10
 Environment=PYTHONPATH=/opt/meet-bot
