@@ -10,7 +10,7 @@ from urllib.parse import parse_qs
 from flask import Flask, request, jsonify, Response
 from google.auth.transport.requests import Request as GoogleRequest
 from google.oauth2.credentials import Credentials
-from google.oauth2.service_account import Credentials as ServiceAccountCredentials
+from google.oauth2 import service_account  # <-- changed this line
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -35,6 +35,7 @@ CONFIG = {
     'mattermost_token': os.environ.get('MATTERMOST_TOKEN'),
     'service_account_file': os.environ.get('GOOGLE_SERVICE_ACCOUNT_FILE', '/etc/meet-bot/service-account.json'),
     'oauth_credentials_file': os.environ.get('GOOGLE_OAUTH_FILE', '/etc/meet-bot/oauth-credentials.json'),
+    'google_impersonation_user': os.environ.get('GOOGLE_IMPERSONATION_USER'),  # <-- added line
     'debug': os.environ.get('DEBUG', 'false').lower() == 'true'
 }
 
@@ -50,15 +51,21 @@ class GoogleMeetService:
     def _initialize_credentials(self):
         """Initialize Google API credentials."""
         try:
-            # Try service account first
             if os.path.exists(CONFIG['service_account_file']):
                 logger.info("Using service account credentials")
-                self.credentials = ServiceAccountCredentials.from_service_account_file(
+                # PATCH: Add subject=... for impersonation
+                subject = CONFIG.get('google_impersonation_user')
+                kwargs = {}
+                if subject:
+                    kwargs['subject'] = subject
+                    logger.info(f"Impersonating user: {subject}")
+                self.credentials = service_account.Credentials.from_service_account_file(
                     CONFIG['service_account_file'],
                     scopes=[
                         'https://www.googleapis.com/auth/calendar',
                         'https://www.googleapis.com/auth/calendar.events'
-                    ]
+                    ],
+                    **kwargs
                 )
             # Fall back to OAuth credentials
             elif os.path.exists(CONFIG['oauth_credentials_file']):
