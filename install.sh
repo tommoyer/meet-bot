@@ -55,10 +55,11 @@ fi
 
 # Create virtual environment
 echo -e "${YELLOW}Creating Python virtual environment...${NC}"
-cd /opt/meet-bot
+pushd /opt/meet-bot &> /dev/null
 sudo -u meet-bot python3 -m venv venv
 sudo -u meet-bot /opt/meet-bot/venv/bin/pip install --upgrade pip
 sudo -u meet-bot /opt/meet-bot/venv/bin/pip install -r requirements.txt
+popd &> /dev/null
 
 # Install systemd service
 echo -e "${YELLOW}Installing systemd service...${NC}"
