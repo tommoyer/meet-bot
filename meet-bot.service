@@ -18,6 +18,7 @@ Environment=MATTERMOST_TOKEN=your_mattermost_token_here
 Environment=GOOGLE_SERVICE_ACCOUNT_FILE=/etc/meet-bot/service-account.json
 Environment=DEBUG=false
 Environment=GOOGLE_IMPERSONATION_USER=tom-tom@terrablue.ai
+Environment=GOOGLE_CALENDAR_ID=c_df2f44b906ca8a584dc87acff7fcd880d40f722b4f2e832714978372a87cb435@group.calendar.google.com
 
 # Security settings
 NoNewPrivileges=true
